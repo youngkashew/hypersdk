@@ -5,6 +5,7 @@ package examples
 
 import (
 	"context"
+	"github.com/ava-labs/hypersdk/x/programs/program"
 	"os"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/hypersdk/x/programs/engine"
-	"github.com/ava-labs/hypersdk/x/programs/examples/imports/program"
+	exampleprogram "github.com/ava-labs/hypersdk/x/programs/examples/imports/program"
 	"github.com/ava-labs/hypersdk/x/programs/examples/imports/pstate"
 	"github.com/ava-labs/hypersdk/x/programs/examples/storage"
 	"github.com/ava-labs/hypersdk/x/programs/host"
@@ -46,7 +47,7 @@ func TestCounterProgram(t *testing.T) {
 		return pstate.New(log, db)
 	})
 	importsBuilder.Register("program", func() host.Import {
-		return program.New(log, eng, db, cfg)
+		return exampleprogram.New(log, eng, db, cfg)
 	})
 	imports := importsBuilder.Build()
 
@@ -78,12 +79,12 @@ func TestCounterProgram(t *testing.T) {
 	require.NoError(err)
 
 	// create counter for alice on program 1
-	result, err := rt.Call(ctx, "initialize_address", programIDPtr, alicePtr)
+	result, err := rt.Call(ctx, program.CallContext{}, "initialize_address", programIDPtr, alicePtr)
 	require.NoError(err)
 	require.Equal(int64(1), result[0])
 
 	// validate counter at 0
-	result, err = rt.Call(ctx, "get_value", programIDPtr, alicePtr)
+	result, err = rt.Call(ctx, program.CallContext{}, "get_value", programIDPtr, alicePtr)
 	require.NoError(err)
 	require.Equal(int64(0), result[0])
 
@@ -117,7 +118,7 @@ func TestCounterProgram(t *testing.T) {
 	require.NoError(err)
 
 	// initialize counter for alice on runtime 2
-	result, err = rt2.Call(ctx, "initialize_address", programID2Ptr, alicePtr2)
+	result, err = rt2.Call(ctx, program.CallContext{}, "initialize_address", programID2Ptr, alicePtr2)
 	require.NoError(err)
 	require.Equal(int64(1), result[0])
 
@@ -125,11 +126,11 @@ func TestCounterProgram(t *testing.T) {
 	incAmount := int64(10)
 	incAmountPtr, err := argumentToSmartPtr(incAmount, mem2)
 	require.NoError(err)
-	result, err = rt2.Call(ctx, "inc", programID2Ptr, alicePtr2, incAmountPtr)
+	result, err = rt2.Call(ctx, program.CallContext{}, "inc", programID2Ptr, alicePtr2, incAmountPtr)
 	require.NoError(err)
 	require.Equal(int64(1), result[0])
 
-	result, err = rt2.Call(ctx, "get_value", programID2Ptr, alicePtr2)
+	result, err = rt2.Call(ctx, program.CallContext{}, "get_value", programID2Ptr, alicePtr2)
 	require.NoError(err)
 	require.Equal(incAmount, result[0])
 
@@ -143,11 +144,11 @@ func TestCounterProgram(t *testing.T) {
 	// increment alice's counter on program 1
 	onePtr, err := argumentToSmartPtr(int64(1), mem)
 	require.NoError(err)
-	result, err = rt.Call(ctx, "inc", programIDPtr, alicePtr, onePtr)
+	result, err = rt.Call(ctx, program.CallContext{}, "inc", programIDPtr, alicePtr, onePtr)
 	require.NoError(err)
 	require.Equal(int64(1), result[0])
 
-	result, err = rt.Call(ctx, "get_value", programIDPtr, alicePtr)
+	result, err = rt.Call(ctx, program.CallContext{}, "get_value", programIDPtr, alicePtr)
 	require.NoError(err)
 
 	log.Debug("count program 1",
@@ -167,12 +168,12 @@ func TestCounterProgram(t *testing.T) {
 	// increment alice's counter on program 2
 	fivePtr, err := argumentToSmartPtr(int64(5), mem)
 	require.NoError(err)
-	result, err = rt.Call(ctx, "inc_external", caller, target, maxUnitsProgramToProgramPtr, alicePtr, fivePtr)
+	result, err = rt.Call(ctx, program.CallContext{}, "inc_external", caller, target, maxUnitsProgramToProgramPtr, alicePtr, fivePtr)
 	require.NoError(err)
 	require.Equal(int64(1), result[0])
 
 	// expect alice's counter on program 2 to be 15
-	result, err = rt.Call(ctx, "get_value_external", caller, target, maxUnitsProgramToProgramPtr, alicePtr)
+	result, err = rt.Call(ctx, program.CallContext{}, "get_value_external", caller, target, maxUnitsProgramToProgramPtr, alicePtr)
 	require.NoError(err)
 	require.Equal(int64(15), result[0])
 	balance, err = rt.Meter().GetBalance()

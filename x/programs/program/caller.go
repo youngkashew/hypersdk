@@ -3,6 +3,8 @@
 
 package program
 
+// #include "github.com/bytecodealliance/wasmtime-go/v14/shims.h"
+import "C"
 import (
 	"fmt"
 
@@ -10,10 +12,15 @@ import (
 )
 
 var _ Instance = (*Caller)(nil)
+var _ wasmtime.Storelike = (*Caller)(nil)
 
 // Caller is a wrapper around a wasmtime.Caller
 type Caller struct {
 	caller *wasmtime.Caller
+}
+
+func (c *Caller) Context() *C.wasmtime_context_t {
+	return c.caller.Context()
 }
 
 // NewCaller creates a new program instance.
@@ -34,7 +41,7 @@ func (c *Caller) GetFunc(name string) (*Func, error) {
 		return nil, err
 	}
 
-	return NewFunc(fn, c.caller), nil
+	return NewFunc(fn, c), nil
 }
 
 func (c *Caller) GetExport(name string) (*Export, error) {

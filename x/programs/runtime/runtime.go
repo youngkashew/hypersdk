@@ -99,13 +99,13 @@ func (r *WasmRuntime) Initialize(ctx context.Context, programBytes []byte, maxUn
 	return nil
 }
 
-func (r *WasmRuntime) Call(_ context.Context, name string, params ...program.SmartPtr) ([]int64, error) {
+func (r *WasmRuntime) Call(_ context.Context, callContext program.CallContext, name string, params ...program.SmartPtr) ([]int64, error) {
 	fn, err := r.inst.GetFunc(name)
 	if err != nil {
 		return nil, err
 	}
 
-	return fn.Call(params...)
+	return fn.Call(callContext, params...)
 }
 
 func (r *WasmRuntime) Memory() (*program.Memory, error) {

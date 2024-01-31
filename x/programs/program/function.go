@@ -23,7 +23,7 @@ func NewFunc(inner *wasmtime.Func, store wasmtime.Storelike) *Func {
 	}
 }
 
-func (f *Func) Call(params ...SmartPtr) ([]int64, error) {
+func (f *Func) Call(callContext CallContext, params ...SmartPtr) ([]int64, error) {
 	fnParams := f.Type().Params()
 	if len(params) != len(fnParams) {
 		return nil, fmt.Errorf("%w for function: %d expected: %d", ErrInvalidParamCount, len(params), len(fnParams))
