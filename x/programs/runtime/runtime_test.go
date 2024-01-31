@@ -43,7 +43,7 @@ func TestStop(t *testing.T) {
 	// stop the runtime
 	runtime.Stop()
 
-	_, err = runtime.Call(ctx, "run")
+	_, err = runtime.Call(ctx, program.CallContext{}, "run")
 	require.ErrorIs(err, program.ErrTrapInterrupt)
 	// ensure no fees were consumed
 	balance, err := runtime.Meter().GetBalance()
@@ -74,12 +74,12 @@ func TestCallParams(t *testing.T) {
 	err = runtime.Initialize(ctx, wasm, maxUnits)
 	require.NoError(err)
 
-	resp, err := runtime.Call(ctx, "add", 10, 10)
+	resp, err := runtime.Call(ctx, program.CallContext{}, "add", 10, 10)
 	require.NoError(err)
 	require.Equal(int64(20), resp[0])
 
 	// pass 3 params when 2 are expected.
-	_, err = runtime.Call(ctx, "add", 10, 10, 10)
+	_, err = runtime.Call(ctx, program.CallContext{}, "add", 10, 10, 10)
 	require.ErrorIs(err, program.ErrInvalidParamCount)
 }
 
@@ -106,7 +106,7 @@ func TestInfiniteLoop(t *testing.T) {
 	err = runtime.Initialize(ctx, wasm, maxUnits)
 	require.NoError(err)
 
-	_, err = runtime.Call(ctx, "get")
+	_, err = runtime.Call(ctx, program.CallContext{}, "get")
 	require.ErrorIs(err, program.ErrTrapOutOfFuel)
 }
 
@@ -139,7 +139,7 @@ func TestMetering(t *testing.T) {
 
 	require.Equal(balance, maxUnits)
 	for i := 0; i < 10; i++ {
-		_, err = runtime.Call(ctx, "get")
+		_, err = runtime.Call(ctx, program.CallContext{}, "get")
 		require.NoError(err)
 	}
 	balance, err = runtime.Meter().GetBalance()
@@ -173,11 +173,11 @@ func TestMeterAfterStop(t *testing.T) {
 	require.NoError(err)
 
 	// spend 2 units
-	_, err = runtime.Call(ctx, "get")
+	_, err = runtime.Call(ctx, program.CallContext{}, "get")
 	require.NoError(err)
 	// stop engine
 	runtime.Stop()
-	_, err = runtime.Call(ctx, "get")
+	_, err = runtime.Call(ctx, program.CallContext{}, "get")
 	require.ErrorIs(err, program.ErrTrapInterrupt)
 	// ensure meter is still operational
 	balance, err := runtime.Meter().GetBalance()
@@ -299,7 +299,7 @@ func TestWithMaxWasmStack(t *testing.T) {
 	runtime := New(logging.NoLog{}, eng, host.NoSupportedImports, cfg)
 	err = runtime.Initialize(context.Background(), wasm, maxUnits)
 	require.NoError(err)
-	_, err = runtime.Call(context.Background(), "get")
+	_, err = runtime.Call(context.Background(), program.CallContext{}, "get")
 	require.NoError(err)
 
 	// stack is ok for 1 call.
@@ -312,6 +312,6 @@ func TestWithMaxWasmStack(t *testing.T) {
 	err = runtime.Initialize(context.Background(), wasm, maxUnits)
 	require.NoError(err)
 	// exceed the stack limit
-	_, err = runtime.Call(context.Background(), "get")
+	_, err = runtime.Call(context.Background(), program.CallContext{}, "get")
 	require.ErrorIs(err, program.ErrTrapStackOverflow)
 }
