@@ -5,7 +5,6 @@ package actions
 
 import (
 	"context"
-	"fmt"
 	"github.com/near/borsh-go"
 
 	"github.com/ava-labs/hypersdk/crypto/ed25519"
@@ -31,9 +30,10 @@ import (
 var _ chain.Action = (*ProgramExecute)(nil)
 
 type ProgramExecute struct {
-	Function string      `json:"programFunction"`
-	MaxUnits uint64      `json:"maxUnits"`
-	Params   []CallParam `json:"params"`
+	ProgramID ids.ID      `json:"programID"`
+	Function  string      `json:"programFunction"`
+	MaxUnits  uint64      `json:"maxUnits"`
+	Params    []CallParam `json:"params"`
 
 	Log logging.Logger
 
@@ -61,8 +61,8 @@ func (t *ProgramExecute) Execute(
 	_ chain.Rules,
 	mu state.Mutable,
 	_ int64,
-	_ codec.Address,
-	_ ids.ID,
+	actor codec.Address,
+	transactionID ids.ID,
 	_ bool,
 ) (success bool, computeUnits uint64, output []byte, warpMessage *warp.UnsignedMessage, err error) {
 	if len(t.Function) == 0 {
@@ -72,18 +72,7 @@ func (t *ProgramExecute) Execute(
 		return false, 1, OutputValueZero, nil, nil
 	}
 
-	programIDStr, ok := t.Params[0].Value.(string)
-	if !ok {
-		return false, 1, utils.ErrBytes(fmt.Errorf("invalid call param: must be ID")), nil, nil
-	}
-
-	// TODO: take fee out of balance?
-	programID, err := ids.FromString(programIDStr)
-	if err != nil {
-		return false, 1, utils.ErrBytes(err), nil, nil
-	}
-	t.Params[0].Value = programID
-	programBytes, err := storage.GetProgram(ctx, mu, programID)
+	programBytes, err := storage.GetProgram(ctx, mu, t.ProgramID)
 	if err != nil {
 		return false, 1, utils.ErrBytes(err), nil, nil
 	}
@@ -128,7 +117,9 @@ func (t *ProgramExecute) Execute(
 		return false, 1, utils.ErrBytes(err), nil, nil
 	}
 
-	resp, err := t.rt.Call(ctx, t.Function, params...)
+	resp, err := t.rt.Call(ctx, program.CallContext{
+		ProgramID: t.ProgramID,
+	}, t.Function, params...)
 	if err != nil {
 		return false, 1, utils.ErrBytes(err), nil, nil
 	}

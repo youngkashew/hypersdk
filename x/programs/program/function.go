@@ -5,27 +5,27 @@ package program
 
 import (
 	"fmt"
-
 	"github.com/bytecodealliance/wasmtime-go/v14"
+	"github.com/near/borsh-go"
 )
 
 // Func is a wrapper around a wasmtime.Func
 type Func struct {
 	inner *wasmtime.Func
-	store wasmtime.Storelike
+	inst  Instance
 }
 
 // NewFunc creates a new func wrapper.
-func NewFunc(inner *wasmtime.Func, store wasmtime.Storelike) *Func {
+func NewFunc(inner *wasmtime.Func, inst Instance) *Func {
 	return &Func{
 		inner: inner,
-		store: store,
+		inst:  inst,
 	}
 }
 
-func (f *Func) Call(callContext CallContext, params ...SmartPtr) ([]int64, error) {
+func (f *Func) Call(context CallContext, params ...SmartPtr) ([]int64, error) {
 	fnParams := f.Type().Params()
-	if len(params) != len(fnParams) {
+	if len(params)-1 != len(fnParams) {
 		return nil, fmt.Errorf("%w for function: %d expected: %d", ErrInvalidParamCount, len(params), len(fnParams))
 	}
 
@@ -35,7 +35,21 @@ func (f *Func) Call(callContext CallContext, params ...SmartPtr) ([]int64, error
 		return nil, err
 	}
 
-	result, err := f.inner.Call(f.store, callParams...)
+	bytes, err := borsh.Serialize(context)
+	if err != nil {
+		return nil, err
+	}
+
+	mem, err := f.inst.Memory()
+	if err != nil {
+		return nil, err
+	}
+
+	ptr, err := BytesToSmartPtr(bytes, mem)
+	if err != nil {
+		return nil, err
+	}
+	result, err := f.inner.Call(f.inst.GetStore(), append([]interface{}{ptr}, callParams...)...)
 	if err != nil {
 		return nil, HandleTrapError(err)
 	}
@@ -55,7 +69,7 @@ func (f *Func) Call(callContext CallContext, params ...SmartPtr) ([]int64, error
 }
 
 func (f *Func) Type() *wasmtime.FuncType {
-	return f.inner.Type(f.store)
+	return f.inner.Type(f.inst.GetStore())
 }
 
 // mapFunctionParams maps call input to the expected wasm function params.

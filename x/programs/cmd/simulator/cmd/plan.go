@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/ava-labs/hypersdk/x/programs/cmd/simulator/vm/actions"
 	"io"
 	"math"
 	"os"
@@ -25,6 +24,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 
 	"github.com/ava-labs/hypersdk/state"
+	"github.com/ava-labs/hypersdk/x/programs/cmd/simulator/vm/actions"
 	"github.com/ava-labs/hypersdk/x/programs/cmd/simulator/vm/storage"
 	"github.com/ava-labs/hypersdk/x/programs/cmd/simulator/vm/utils"
 )
@@ -239,7 +239,17 @@ func runStepFunc(
 
 			return nil
 		}
-		id, _, balance, err := programExecuteFunc(ctx, log, db, params, method, maxUnits)
+
+		programIDStr, ok := params[0].Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid call param: must be ID")
+		}
+
+		programID, err := ids.FromString(programIDStr)
+		if err != nil {
+			return err
+		}
+		id, _, balance, err := programExecuteFunc(ctx, log, db, programID, params[1:], method, maxUnits)
 		if err != nil {
 			return err
 		}
@@ -248,13 +258,22 @@ func runStepFunc(
 
 		return nil
 	case EndpointReadOnly:
-		// TODO: implement readonly for now just don't charge for gas
-		_, response, _, err := programExecuteFunc(ctx, log, db, params, method, math.MaxUint64)
+		programIDStr, ok := params[0].Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid call param: must be ID")
+		}
+
+		programID, err := ids.FromString(programIDStr)
+		if err != nil {
+			return err
+		}
+
+		_, response, _, err := programExecuteFunc(ctx, log, db, programID, params[1:], method, math.MaxUint64)
 		if err != nil {
 			return err
 		}
 		resp.setResponse(response)
-		ok, err := validateAssertion(response[0], require)
+		ok, err = validateAssertion(response[0], require)
 		if !ok {
 			return fmt.Errorf("%w", ErrResultAssertionFailed)
 		}

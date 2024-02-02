@@ -138,6 +138,7 @@ func programExecuteFunc(
 	ctx context.Context,
 	log logging.Logger,
 	db *state.SimpleMutable,
+	programID ids.ID,
 	callParams []actions.CallParam,
 	function string,
 	maxUnits uint64,
@@ -149,10 +150,11 @@ func programExecuteFunc(
 	}
 
 	programExecuteAction := actions.ProgramExecute{
-		Function: function,
-		Params:   callParams,
-		MaxUnits: maxUnits,
-		Log:      log,
+		ProgramID: programID,
+		Function:  function,
+		Params:    callParams,
+		MaxUnits:  maxUnits,
+		Log:       log,
 	}
 
 	// execute the action
