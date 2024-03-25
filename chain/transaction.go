@@ -133,59 +133,37 @@ func (t *Transaction) StateKeys(sm StateManager) (state.Keys, error) {
 	if t.stateKeys != nil {
 		return t.stateKeys, nil
 	}
-	stateKeys := set.NewSet[string](defaultStateKeySize)
-
-	// Verify the formatting of state keys passed by the controller
-	actionKeys := t.Action.StateKeys(t.Auth.Actor(), t.ID())
-	sponsorKeys := sm.SponsorStateKeys(t.Auth.Sponsor())
 	stateKeys := make(state.Keys)
-	for _, m := range []state.Keys{actionKeys, sponsorKeys} {
-		for k, v := range m {
+
 	// Handle incoming warp message keys
 	if t.WarpMessage != nil {
 		p := sm.IncomingWarpKeyPrefix(t.WarpMessage.SourceChainID, t.warpID)
 		k := keys.EncodeChunks(p, MaxIncomingWarpChunks)
-		stateKeys.Add(string(k))
+		stateKeys.Add(string(k), state.All)
 	}
 
 	// Handle action/auth keys
 	var outputsWarp bool
 	for _, action := range t.Actions {
 		if action.OutputsWarpMessage() {
-			if outputsWarp {
-				// TODO: handle multiple outgoing warp messages (use actionID instead of txID)
-				return nil, errors.New("can't ouput multiple messaages")
-			}
-			p := sm.OutgoingWarpKeyPrefix(t.id)
+			p := sm.OutgoingWarpKeyPrefix(action.GetTypeID())
 			k := keys.EncodeChunks(p, MaxOutgoingWarpChunks)
-			stateKeys.Add(string(k))
+			stateKeys.Add(string(k), state.Allocate|state.Write)
 			outputsWarp = true
 		}
 		// TODO: may need to use an ActionID instead of a TxID (if creating 2 assets in same tx, could lead to conflicts)
-		for _, k := range action.StateKeys(t.Auth.Actor(), t.ID()) {
+		for k, v := range action.StateKeys(t.Auth.Actor(), action.GetTypeID()) {
 			if !keys.Valid(k) {
 				return nil, ErrInvalidKeyValue
 			}
 			stateKeys.Add(k, v)
 		}
 	}
-
-	// Add keys used to manage warp operations
-	if t.WarpMessage != nil {
-		p := sm.IncomingWarpKeyPrefix(t.WarpMessage.SourceChainID, t.warpID)
-		k := keys.EncodeChunks(p, MaxIncomingWarpChunks)
-		stateKeys.Add(string(k), state.All)
-	}
-	if t.Action.OutputsWarpMessage() {
-		// TODO: handle multiple outgoing warp messages
-		p := sm.OutgoingWarpKeyPrefix(t.id)
-		k := keys.EncodeChunks(p, MaxOutgoingWarpChunks)
-		stateKeys.Add(string(k), state.Allocate|state.Write)
-	for _, k := range sm.SponsorStateKeys(t.Auth.Sponsor()) {
+	for k, v := range sm.SponsorStateKeys(t.Auth.Sponsor()) {
 		if !keys.Valid(k) {
 			return nil, ErrInvalidKeyValue
 		}
-		stateKeys.Add(k)
+		stateKeys.Add(k, v)
 	}
 
 	// Cache keys if called again
@@ -415,6 +393,8 @@ func (t *Transaction) Execute(
 		}
 	}
 
+	results := []*Result{}
+
 	// We create a temp state checkpoint to ensure we don't commit failed actions to state.
 	actionStart := ts.OpIndex()
 	handleRevert := func(rerr error) ([]*Result, error) {
@@ -422,7 +402,7 @@ func (t *Transaction) Execute(
 		// are set when this function is defined. If any of them are
 		// modified later, they will not be used here.
 		ts.Rollback(ctx, actionStart)
-		return &Result{false, utils.ErrBytes(rerr), maxUnits, maxFee, nil}, nil
+		return []*Result{{false, utils.ErrBytes(rerr), maxUnits, maxFee, nil}}, nil
 	}
 	for _, action := range t.Actions {
 		success, actionCUs, output, warpMessage, err := action.Execute(ctx, r, ts, timestamp, t.Auth.Actor(), t.id, warpVerified)
@@ -472,103 +452,105 @@ func (t *Transaction) Execute(
 				}
 			}
 		}
-	}
 
-	// Calculate units used
-	computeUnitsOp := math.NewUint64Operator(r.GetBaseComputeUnits())
-	computeUnitsOp.Add(t.Auth.ComputeUnits(r))
-	computeUnitsOp.Add(actionCUs)
-	if t.WarpMessage != nil {
-		computeUnitsOp.Add(r.GetBaseWarpComputeUnits())
-		computeUnitsOp.MulAdd(uint64(t.numWarpSigners), r.GetWarpComputeUnitsPerSigner())
-	}
-	if success && outputsWarp {
-		computeUnitsOp.Add(r.GetOutgoingWarpComputeUnits())
-	}
-	computeUnits, err := computeUnitsOp.Value()
-	if err != nil {
-		return handleRevert(err)
-	}
-
-	// Because the key database is abstracted from [Auth]/[Actions], we can compute
-	// all storage use in the background. KeyOperations is unique to a view.
-	allocates, writes := ts.KeyOperations()
-
-	// Because we compute the fee before [Auth.Refund] is called, we need
-	// to pessimistically precompute the storage it will change.
-	for key := range s.SponsorStateKeys(t.Auth.Sponsor()) {
-		// maxChunks will be greater than the chunks read in any of these keys,
-		// so we don't need to check for pre-existing values.
-		maxChunks, ok := keys.MaxChunks([]byte(key))
-		if !ok {
-			return handleRevert(ErrInvalidKeyValue)
+		// Calculate units used
+		computeUnitsOp := math.NewUint64Operator(r.GetBaseComputeUnits())
+		computeUnitsOp.Add(t.Auth.ComputeUnits(r))
+		computeUnitsOp.Add(actionCUs)
+		if t.WarpMessage != nil {
+			computeUnitsOp.Add(r.GetBaseWarpComputeUnits())
+			computeUnitsOp.MulAdd(uint64(t.numWarpSigners), r.GetWarpComputeUnitsPerSigner())
 		}
-		writes[key] = maxChunks
-	}
+		if success && outputsWarp {
+			computeUnitsOp.Add(r.GetOutgoingWarpComputeUnits())
+		}
+		computeUnits, err := computeUnitsOp.Value()
+		if err != nil {
+			return handleRevert(err)
+		}		
 
-	// We only charge for the chunks read from disk instead of charging for the max chunks
-	// specified by the key.
-	readsOp := math.NewUint64Operator(0)
-	for _, chunksRead := range reads {
-		readsOp.Add(r.GetStorageKeyReadUnits())
-		readsOp.MulAdd(uint64(chunksRead), r.GetStorageValueReadUnits())
-	}
-	readUnits, err := readsOp.Value()
-	if err != nil {
-		return handleRevert(err)
-	}
-	allocatesOp := math.NewUint64Operator(0)
-	for _, chunksStored := range allocates {
-		allocatesOp.Add(r.GetStorageKeyAllocateUnits())
-		allocatesOp.MulAdd(uint64(chunksStored), r.GetStorageValueAllocateUnits())
-	}
-	allocateUnits, err := allocatesOp.Value()
-	if err != nil {
-		return handleRevert(err)
-	}
-	writesOp := math.NewUint64Operator(0)
-	for _, chunksModified := range writes {
-		writesOp.Add(r.GetStorageKeyWriteUnits())
-		writesOp.MulAdd(uint64(chunksModified), r.GetStorageValueWriteUnits())
-	}
-	writeUnits, err := writesOp.Value()
-	if err != nil {
-		return handleRevert(err)
-	}
-	used := fees.Dimensions{uint64(t.Size()), computeUnits, readUnits, allocateUnits, writeUnits}
+		// Because the key database is abstracted from [Auth]/[Actions], we can compute
+		// all storage use in the background. KeyOperations is unique to a view.
+		allocates, writes := ts.KeyOperations()
 
-	// Check to see if the units consumed are greater than the max units
-	//
-	// This should never be the case but erroring here is better than
-	// underflowing the refund.
-	if !maxUnits.Greater(used) {
-		return nil, fmt.Errorf("%w: max=%+v consumed=%+v", ErrInvalidUnitsConsumed, maxUnits, used)
-	}
+		// Because we compute the fee before [Auth.Refund] is called, we need
+		// to pessimistically precompute the storage it will change.
+		for key := range s.SponsorStateKeys(t.Auth.Sponsor()) {
+			// maxChunks will be greater than the chunks read in any of these keys,
+			// so we don't need to check for pre-existing values.
+			maxChunks, ok := keys.MaxChunks([]byte(key))
+			if !ok {
+				return handleRevert(ErrInvalidKeyValue)
+			}
+			writes[key] = maxChunks
+		}
 
-	// Return any funds from unused units
-	//
-	// To avoid storage abuse of [Auth.Refund], we precharge for possible usage.
-	feeRequired, err := feeManager.MaxFee(used)
-	if err != nil {
-		return handleRevert(err)
-	}
-	refund := maxFee - feeRequired
-	if refund > 0 {
-		ts.DisableAllocation()
-		defer ts.EnableAllocation()
-		if err := s.Refund(ctx, t.Auth.Sponsor(), ts, refund); err != nil {
+		// We only charge for the chunks read from disk instead of charging for the max chunks
+		// specified by the key.
+		readsOp := math.NewUint64Operator(0)
+		for _, chunksRead := range reads {
+			readsOp.Add(r.GetStorageKeyReadUnits())
+			readsOp.MulAdd(uint64(chunksRead), r.GetStorageValueReadUnits())
+		}
+		readUnits, err := readsOp.Value()
+		if err != nil {
 			return handleRevert(err)
 		}
+		allocatesOp := math.NewUint64Operator(0)
+		for _, chunksStored := range allocates {
+			allocatesOp.Add(r.GetStorageKeyAllocateUnits())
+			allocatesOp.MulAdd(uint64(chunksStored), r.GetStorageValueAllocateUnits())
+		}
+		allocateUnits, err := allocatesOp.Value()
+		if err != nil {
+			return handleRevert(err)
+		}
+		writesOp := math.NewUint64Operator(0)
+		for _, chunksModified := range writes {
+			writesOp.Add(r.GetStorageKeyWriteUnits())
+			writesOp.MulAdd(uint64(chunksModified), r.GetStorageValueWriteUnits())
+		}
+		writeUnits, err := writesOp.Value()
+		if err != nil {
+			return handleRevert(err)
+		}
+		used := fees.Dimensions{uint64(t.Size()), computeUnits, readUnits, allocateUnits, writeUnits}
+
+		// Check to see if the units consumed are greater than the max units
+		//
+		// This should never be the case but erroring here is better than
+		// underflowing the refund.
+		if !maxUnits.Greater(used) {
+			return nil, fmt.Errorf("%w: max=%+v consumed=%+v", ErrInvalidUnitsConsumed, maxUnits, used)
+		}
+
+		// Return any funds from unused units
+		//
+		// To avoid storage abuse of [Auth.Refund], we precharge for possible usage.
+		feeRequired, err := feeManager.MaxFee(used)
+		if err != nil {
+			return handleRevert(err)
+		}
+		refund := maxFee - feeRequired
+		if refund > 0 {
+			ts.DisableAllocation()
+			defer ts.EnableAllocation()
+			if err := s.Refund(ctx, t.Auth.Sponsor(), ts, refund); err != nil {
+				return handleRevert(err)
+			}
+		}
+
+		results = append(results, &Result{
+			Success: success,
+			Output:  output,
+	
+			Consumed: used,
+			Fee:      feeRequired,
+	
+			WarpMessage: warpMessage,			
+		})
 	}
-	return &Result{
-		Success: success,
-		Output:  output,
-
-		Consumed: used,
-		Fee:      feeRequired,
-
-		WarpMessage: warpMessage,
-	}, nil
+	return results, nil
 }
 
 func (t *Transaction) Marshal(p *codec.Packer) error {
